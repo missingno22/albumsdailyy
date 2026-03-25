@@ -40,6 +40,30 @@ def load_env():
     return env_vars
 
 
+def check_instagram_token(user_id, access_token):
+    """Verify the Instagram access token is still valid. Returns True if OK."""
+    import urllib.request
+    import urllib.error
+    url = f"https://graph.facebook.com/v25.0/{user_id}?fields=id&access_token={access_token}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            if data.get("id"):
+                print("  Instagram token: valid — OK")
+                return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"  ERROR: Instagram token invalid or expired (HTTP {e.code})")
+        print(f"  {body[:200]}")
+        print(f"  -> Update the INSTAGRAM_ACCESS_TOKEN secret in GitHub")
+        return False
+    except Exception as e:
+        print(f"  WARNING: Could not verify Instagram token: {e}")
+        # Don't block on network issues — let the actual post attempt decide
+        return True
+
+
 def reencode_for_instagram(input_path):
     """Re-encode video to 9:16 H.264 if needed. Returns path to post."""
     # Probe the video to check format
@@ -109,6 +133,11 @@ def main():
         print("Error: INSTAGRAM_USER_ID and INSTAGRAM_ACCESS_TOKEN required")
         sys.exit(1)
 
+    # Verify Instagram token before doing any work
+    print("Checking credentials...")
+    if not check_instagram_token(user_id, access_token):
+        sys.exit(1)
+
     # Connect to Google services
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     print(f"Checking queue for items due by {now_utc}...")
@@ -158,7 +187,11 @@ def main():
             sheets.update_status(item["_row_index"], "posted", media_id=media_id)
             print(f"  Posted! Media ID: {media_id}")
 
-            # Cleanup downloaded file
+            # Cleanup: delete from Drive to save storage
+            if item.get("drive_id"):
+                drive.delete_video(item["drive_id"])
+
+            # Cleanup local downloaded files
             for f in [download_path, post_path]:
                 if os.path.exists(f):
                     os.remove(f)

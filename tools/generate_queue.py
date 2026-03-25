@@ -51,6 +51,24 @@ SCHEDULE = {
 }
 
 
+def validate_albums():
+    """Check that enough album files exist. Exits with error if fewer than 3."""
+    albums_dir = os.path.join(PROJECT_ROOT, "albums")
+    if not os.path.exists(albums_dir):
+        print("ERROR: albums/ directory not found")
+        sys.exit(1)
+
+    album_files = [f for f in os.listdir(albums_dir) if f.endswith(".md")]
+    if len(album_files) < 3:
+        print(f"ERROR: Need at least 3 album files in albums/, found {len(album_files)}")
+        print(f"  Files found: {album_files}")
+        print(f"  The weekly schedule needs 3 full reels (Mon/Wed/Fri) + 3 short reels (Tue/Thu/Sat)")
+        sys.exit(1)
+
+    print(f"  Album check: {len(album_files)} albums available — OK")
+    return album_files
+
+
 def load_album_queue():
     """Load the album rotation queue."""
     queue_path = os.path.join(PROJECT_ROOT, "album_queue.json")
@@ -205,11 +223,28 @@ def generate_draft_caption(reel_type, album_path=None):
     return "Album ranking — do you agree? #music #albumranking"
 
 
+def days_until_next_sunday():
+    """Calculate days from today through next Sunday (inclusive)."""
+    today = datetime.now()
+    dow = today.weekday()  # 0=Mon, 6=Sun
+    if dow == 6:
+        # It's Sunday — generate through next Sunday (7 days)
+        return 7
+    else:
+        # Days remaining this week + next full week through Sunday
+        return (6 - dow) + 7
+
+
 def main():
+    default_days = days_until_next_sunday()
     parser = argparse.ArgumentParser(description="Generate and queue upcoming content")
-    parser.add_argument("--days", type=int, default=7, help="Number of days ahead to generate (default: 7)")
+    parser.add_argument("--days", type=int, default=default_days,
+                        help=f"Number of days ahead to generate (default: {default_days}, through next Sunday)")
     parser.add_argument("--dry-run", action="store_true", help="Show schedule without generating")
     args = parser.parse_args()
+
+    # Validate we have enough albums before doing anything
+    validate_albums()
 
     album_queue = load_album_queue()
     today = datetime.now()
@@ -239,16 +274,22 @@ def main():
         if item["type"] in ("full", "short"):
             idx = album_queue["current_index"] % len(album_queue["albums"])
             album = f" — {album_queue['albums'][idx]}"
-        print(f"  {item['day_name']:9s} {item['date']} {item['post_time']} UTC → {item['type']}{album}")
+        print(f"  {item['day_name']:9s} {item['date']} {item['post_time']} UTC -> {item['type']}{album}")
 
     if args.dry_run:
         print(f"\n(Dry run — nothing generated)")
         return
 
-    # Initialize Google services
+    # Initialize Google services (will fail fast if token is invalid)
     print(f"\nConnecting to Google services...")
-    sheets = SheetsQueue()
-    drive = DriveStorage()
+    try:
+        sheets = SheetsQueue()
+        drive = DriveStorage()
+        print("  Google services connected — OK")
+    except Exception as e:
+        print(f"ERROR: Could not connect to Google services: {e}")
+        print("  -> Check GOOGLE_TOKEN_JSON and GOOGLE_CREDENTIALS_JSON secrets")
+        sys.exit(1)
 
     generated = 0
     skipped = 0

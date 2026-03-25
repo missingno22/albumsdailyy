@@ -52,8 +52,11 @@ jobs:
 
       - name: Generate and queue content
         run: |
-          DAYS=${{ github.event.inputs.days || '7' }}
-          python tools/generate_queue.py --days $DAYS
+          if [ -n "${{ github.event.inputs.days }}" ]; then
+            python tools/generate_queue.py --days ${{ github.event.inputs.days }}
+          else
+            python tools/generate_queue.py
+          fi
 
       - name: Commit updated queue state
         run: |

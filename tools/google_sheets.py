@@ -194,7 +194,7 @@ class SheetsQueue:
                 valueInputOption="RAW",
                 body={"values": [[str(media_id)]]},
             ).execute()
-        print(f"  Row {row_index}: status → {status}" + (f", media_id → {media_id}" if media_id else ""))
+        print(f"  Row {row_index}: status -> {status}" + (f", media_id -> {media_id}" if media_id else ""))
 
     def has_entry(self, date, post_time):
         """Check if an entry already exists for a given date and post time."""

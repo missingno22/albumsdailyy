@@ -246,6 +246,12 @@ def main():
     # Validate we have enough albums before doing anything
     validate_albums()
 
+    # Log font paths for debugging CI issues
+    from tools.shared.video_utils import FONT_BOLD, FONT_IMPACT, FONT_DISPLAY
+    for name, path in [("BOLD", FONT_BOLD), ("IMPACT", FONT_IMPACT), ("DISPLAY", FONT_DISPLAY)]:
+        exists = os.path.exists(path)
+        print(f"  Font {name}: {path} -- {'OK' if exists else 'MISSING'}")
+
     album_queue = load_album_queue()
     today = datetime.now()
 

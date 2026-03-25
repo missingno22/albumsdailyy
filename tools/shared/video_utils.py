@@ -27,10 +27,39 @@ from moviepy import (
 # === Constants ===
 WIDTH, HEIGHT = 1080, 1920
 FPS = 30
-FONT_BOLD = "C:/Windows/Fonts/arialbd.ttf"
-FONT_REGULAR = "C:/Windows/Fonts/arial.ttf"
-FONT_IMPACT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".tmp", "fonts", "CollegiateBlackFLF.ttf")
-FONT_DISPLAY = "C:/Windows/Fonts/bahnschrift.ttf"
+
+# Font paths — cross-platform (Windows local fonts, Linux CI uses DejaVu as fallback)
+_PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+_FONTS_DIR = os.path.join(_PROJECT_ROOT, "fonts")
+
+
+def _resolve_font(primary, fallbacks):
+    """Return the first font path that exists."""
+    for path in [primary] + fallbacks:
+        if os.path.exists(path):
+            return path
+    return primary  # let PIL raise the error with the intended path
+
+
+# Custom font (committed to repo)
+FONT_IMPACT = _resolve_font(
+    os.path.join(_FONTS_DIR, "CollegiateBlackFLF.ttf"),
+    [os.path.join(_PROJECT_ROOT, ".tmp", "fonts", "CollegiateBlackFLF.ttf")]
+)
+
+# System fonts with Linux fallbacks
+FONT_BOLD = _resolve_font("C:/Windows/Fonts/arialbd.ttf", [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+])
+FONT_REGULAR = _resolve_font("C:/Windows/Fonts/arial.ttf", [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+])
+FONT_DISPLAY = _resolve_font("C:/Windows/Fonts/bahnschrift.ttf", [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+])
 
 
 def rating_color(rating):

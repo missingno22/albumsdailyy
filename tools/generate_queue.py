@@ -1,20 +1,30 @@
 """
-Generate upcoming week's content and queue it in Google Sheets for review.
+Queue videos from Google Drive into the Google Sheets posting schedule.
 
-Reads the posting schedule, generates reels for each slot, uploads to Drive,
-and adds rows to the Google Sheets queue with status "pending".
+Scans the Drive folder for numbered videos (e.g. "1-CollegeDropout.mp4"),
+picks up where it left off, and fills the Sheet with rows for the upcoming week.
+
+This runs LOCALLY — video rendering and uploading to Drive happens on your machine.
+GitHub Actions only handles posting at the scheduled times.
 
 Usage:
-    # Generate next 7 days of content
+    # Queue next week's posts (through next Sunday)
     python tools/generate_queue.py
 
-    # Generate specific number of days ahead
+    # Queue specific number of days
     python tools/generate_queue.py --days 3
 
-    # Dry run (show what would be generated without doing it)
+    # Dry run (show what would be queued)
     python tools/generate_queue.py --dry-run
 
-Schedule (default UTC times — user sets exact post_time in the Sheet):
+Drive folder convention:
+    Videos should be named with a number prefix for ordering:
+        1-CollegeDropout.mp4
+        2-LateRegistration.mp4
+        3-Graduation.mp4
+    The system tracks which video is next via video_queue.json.
+
+Schedule (default UTC times — edit post_time in the Sheet):
     Mon 16:00: full    | Mon 23:00: engagement
     Tue 16:00: engagement | Tue 23:00: short
     Wed 16:00: full    | Wed 23:00: engagement
@@ -27,7 +37,7 @@ Schedule (default UTC times — user sets exact post_time in the Sheet):
 import argparse
 import json
 import os
-import subprocess
+import re
 import sys
 from datetime import datetime, timedelta
 
@@ -39,7 +49,7 @@ from tools.google_drive import DriveStorage
 
 # Weekly schedule: day_of_week (0=Mon) -> {post_time_utc: reel_type}
 # Default times: 16:00 UTC (12pm EDT) and 23:00 UTC (7pm EDT)
-# User can edit the exact post_time in the Google Sheet after generation.
+# User can edit the exact post_time in the Google Sheet after queuing.
 SCHEDULE = {
     0: {"16:00": "full", "23:00": "engagement"},      # Monday
     1: {"16:00": "engagement", "23:00": "short"},      # Tuesday
@@ -50,177 +60,63 @@ SCHEDULE = {
     6: {"16:00": "engagement"},                         # Sunday (no evening)
 }
 
-
-def validate_albums():
-    """Check that enough album files exist. Exits with error if fewer than 3."""
-    albums_dir = os.path.join(PROJECT_ROOT, "albums")
-    if not os.path.exists(albums_dir):
-        print("ERROR: albums/ directory not found")
-        sys.exit(1)
-
-    album_files = [f for f in os.listdir(albums_dir) if f.endswith(".md")]
-    if len(album_files) < 3:
-        print(f"ERROR: Need at least 3 album files in albums/, found {len(album_files)}")
-        print(f"  Files found: {album_files}")
-        print(f"  The weekly schedule needs 3 full reels (Mon/Wed/Fri) + 3 short reels (Tue/Thu/Sat)")
-        sys.exit(1)
-
-    print(f"  Album check: {len(album_files)} albums available — OK")
-    return album_files
+QUEUE_FILE = os.path.join(PROJECT_ROOT, "video_queue.json")
 
 
-def load_album_queue():
-    """Load the album rotation queue."""
-    queue_path = os.path.join(PROJECT_ROOT, "album_queue.json")
-    with open(queue_path, "r") as f:
-        return json.load(f)
+def load_video_queue():
+    """Load the video queue tracker (which Drive video is next)."""
+    if os.path.exists(QUEUE_FILE):
+        with open(QUEUE_FILE, "r") as f:
+            return json.load(f)
+    return {"current_index": 0}
 
 
-def save_album_queue(queue_data):
-    """Save updated album queue (advanced index)."""
-    queue_path = os.path.join(PROJECT_ROOT, "album_queue.json")
-    with open(queue_path, "w") as f:
+def save_video_queue(queue_data):
+    """Save updated video queue tracker."""
+    with open(QUEUE_FILE, "w") as f:
         json.dump(queue_data, f, indent=2)
         f.write("\n")
 
 
-def get_next_album(queue_data):
-    """Get the next album in rotation and advance the index."""
-    albums = queue_data["albums"]
-    idx = queue_data["current_index"] % len(albums)
-    album = albums[idx]
+def parse_video_number(name):
+    """Extract the leading number from a filename like '1-CollegeDropout.mp4'."""
+    match = re.match(r"^(\d+)", name)
+    return int(match.group(1)) if match else None
+
+
+def get_sorted_drive_videos(drive):
+    """Get all videos from Drive folder, sorted by their number prefix."""
+    print("  Scanning Drive folder for videos...")
+    files = drive.list_videos()
+
+    # Filter to mp4s with number prefixes and sort
+    numbered = []
+    for f in files:
+        num = parse_video_number(f["name"])
+        if num is not None and f["name"].lower().endswith(".mp4"):
+            numbered.append((num, f))
+
+    numbered.sort(key=lambda x: x[0])
+
+    if not numbered:
+        print("  ERROR: No numbered videos found in Drive folder")
+        print("  Upload videos named like: 1-CollegeDropout.mp4, 2-LateRegistration.mp4")
+        sys.exit(1)
+
+    print(f"  Found {len(numbered)} videos in Drive:")
+    for num, f in numbered:
+        size_mb = int(f.get("size", 0)) / (1024 * 1024)
+        print(f"    {num}. {f['name']} ({size_mb:.1f}MB)")
+
+    return numbered
+
+
+def get_next_video(numbered_videos, queue_data):
+    """Get the next video in rotation and advance the index."""
+    idx = queue_data["current_index"] % len(numbered_videos)
+    num, video = numbered_videos[idx]
     queue_data["current_index"] = idx + 1
-    return album
-
-
-def get_next_engagement_reel():
-    """Get the next engagement reel from the content directory."""
-    content_dir = os.path.join(PROJECT_ROOT, "content", "engagement")
-    if not os.path.exists(content_dir):
-        print(f"  Warning: {content_dir} not found")
-        return None
-
-    reels = sorted([
-        f for f in os.listdir(content_dir)
-        if f.endswith(".mp4") and not f.endswith("_compat.mp4")
-    ])
-    if not reels:
-        print("  Warning: No engagement reels in content/engagement/")
-        return None
-
-    # Track which reel to use next via a simple counter file
-    tracker_path = os.path.join(content_dir, ".tracker")
-    idx = 0
-    if os.path.exists(tracker_path):
-        with open(tracker_path, "r") as f:
-            try:
-                idx = int(f.read().strip()) % len(reels)
-            except ValueError:
-                idx = 0
-
-    reel = os.path.join(content_dir, reels[idx])
-
-    # Advance tracker
-    with open(tracker_path, "w") as f:
-        f.write(str(idx + 1))
-
-    return reel
-
-
-def run_step(description, command):
-    """Run a pipeline step."""
-    print(f"  {description}...")
-    result = subprocess.run(command, cwd=PROJECT_ROOT, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  ERROR: {description} failed")
-        print(f"  {result.stderr[-500:]}" if result.stderr else "")
-        return False
-    return True
-
-
-def generate_reel(album_path, reel_type):
-    """Generate a full or short reel from an album file. Returns output file path."""
-    print(f"\n  Generating {reel_type} reel for {album_path}...")
-
-    # Ensure directories
-    for d in [".tmp/audio", ".tmp/broll", ".tmp/output"]:
-        os.makedirs(os.path.join(PROJECT_ROOT, d), exist_ok=True)
-
-    if reel_type == "full":
-        output_file = os.path.join(PROJECT_ROOT, ".tmp", "output", "reel_final.mp4")
-        timing_script = "tools/full_reel/calculate_full_timing.py"
-        compose_script = "tools/full_reel/compose_full_reel.py"
-    else:
-        output_file = os.path.join(PROJECT_ROOT, ".tmp", "output", "short_reel_final.mp4")
-        timing_script = "tools/short_reel/calculate_short_timing.py"
-        compose_script = "tools/short_reel/compose_short_reel.py"
-
-    steps = [
-        ("Parsing album rankings", f"python tools/parse_markdown.py {album_path}"),
-        ("Downloading audio clips", "python tools/download_audio.py"),
-        ("Downloading B-Roll video", "python tools/download_broll.py"),
-        ("Calculating timing", f"python {timing_script}"),
-        ("Composing reel", f"python {compose_script}"),
-    ]
-
-    for desc, cmd in steps:
-        if not run_step(desc, cmd):
-            return None
-
-    if not os.path.exists(output_file):
-        print(f"  ERROR: Output not found at {output_file}")
-        return None
-
-    # Re-encode for Instagram compatibility (9:16, H.264)
-    compat_file = output_file.replace(".mp4", "_compat.mp4")
-    reencode_cmd = (
-        f'ffmpeg -y -i "{output_file}" '
-        f'-vf "scale=1080:1920:force_original_aspect_ratio=decrease,'
-        f'pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black" '
-        f'-c:v libx264 -profile:v high -level 4.0 -pix_fmt yuv420p '
-        f'-c:a aac -b:a 128k -movflags +faststart -r 30 "{compat_file}"'
-    )
-    if run_step("Re-encoding for Instagram", reencode_cmd):
-        return compat_file
-    return output_file
-
-
-def reencode_engagement_reel(reel_path):
-    """Re-encode an engagement reel to 9:16 H.264 for Instagram."""
-    compat_path = reel_path.replace(".mp4", "_compat.mp4")
-    reencode_cmd = (
-        f'ffmpeg -y -i "{reel_path}" '
-        f'-vf "scale=1080:1920:force_original_aspect_ratio=decrease,'
-        f'pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black" '
-        f'-c:v libx264 -profile:v high -pix_fmt yuv420p -r 30 '
-        f'-c:a aac -b:a 128k -movflags +faststart "{compat_path}"'
-    )
-    if run_step("Re-encoding engagement reel", reencode_cmd):
-        return compat_path
-    return reel_path
-
-
-def generate_draft_caption(reel_type, album_path=None):
-    """Generate a placeholder caption for review."""
-    if reel_type == "engagement":
-        return "🔥 #kanye #ye #music"
-
-    # Parse album data for a better caption
-    if album_path:
-        album_data_path = os.path.join(PROJECT_ROOT, ".tmp", "album_data.json")
-        if os.path.exists(album_data_path):
-            with open(album_data_path, "r") as f:
-                data = json.load(f)
-            artist = data.get("artist", "")
-            album = data.get("album", "")
-            song_count = len(data.get("songs", []))
-            return (
-                f"Every song on {album} by {artist}, rated and ranked. "
-                f"{song_count} songs, worst to best. Do you agree with my rankings?\n\n"
-                f"#{''.join(artist.lower().split())} #{album.lower().replace(' ', '')} #albumranking #musicreview"
-            )
-
-    return "Album ranking — do you agree? #music #albumranking"
+    return video
 
 
 def days_until_next_sunday():
@@ -228,40 +124,74 @@ def days_until_next_sunday():
     today = datetime.now()
     dow = today.weekday()  # 0=Mon, 6=Sun
     if dow == 6:
-        # It's Sunday — generate through next Sunday (7 days)
         return 7
     else:
-        # Days remaining this week + next full week through Sunday
         return (6 - dow) + 7
+
+
+def generate_draft_caption(reel_type, video_name=""):
+    """Generate a placeholder caption for review."""
+    if reel_type == "engagement":
+        return "#kanye #ye #music"
+
+    # Try to extract album name from video filename
+    # e.g. "1-CollegeDropout.mp4" -> "College Dropout"
+    clean = re.sub(r"^\d+[-_]?", "", video_name)
+    clean = clean.replace(".mp4", "").replace("_", " ").replace("-", " ").strip()
+
+    if clean:
+        return (
+            f"Every song on {clean}, rated and ranked. "
+            f"Worst to best. Do you agree with my rankings?\n\n"
+            f"#albumranking #musicreview #music"
+        )
+
+    return "Album ranking -- do you agree? #music #albumranking"
 
 
 def main():
     default_days = days_until_next_sunday()
-    parser = argparse.ArgumentParser(description="Generate and queue upcoming content")
+    parser = argparse.ArgumentParser(description="Queue Drive videos into the posting schedule")
     parser.add_argument("--days", type=int, default=default_days,
-                        help=f"Number of days ahead to generate (default: {default_days}, through next Sunday)")
-    parser.add_argument("--dry-run", action="store_true", help="Show schedule without generating")
+                        help=f"Number of days ahead to queue (default: {default_days}, through next Sunday)")
+    parser.add_argument("--dry-run", action="store_true", help="Show schedule without queuing")
     args = parser.parse_args()
 
-    # Validate we have enough albums before doing anything
-    validate_albums()
+    # Connect to Google services
+    print("Connecting to Google services...")
+    try:
+        sheets = SheetsQueue()
+        drive = DriveStorage()
+        print("  Connected -- OK")
+    except Exception as e:
+        print(f"ERROR: Could not connect to Google services: {e}")
+        sys.exit(1)
 
-    # Log font paths for debugging CI issues
-    from tools.shared.video_utils import FONT_BOLD, FONT_IMPACT, FONT_DISPLAY
-    for name, path in [("BOLD", FONT_BOLD), ("IMPACT", FONT_IMPACT), ("DISPLAY", FONT_DISPLAY)]:
-        exists = os.path.exists(path)
-        print(f"  Font {name}: {path} -- {'OK' if exists else 'MISSING'}")
+    # Scan Drive for numbered videos
+    numbered_videos = get_sorted_drive_videos(drive)
+    video_queue = load_video_queue()
 
-    album_queue = load_album_queue()
+    # Get engagement reel videos (any video with "engagement" in the name)
+    engagement_videos = [(n, f) for n, f in numbered_videos if "engagement" in f["name"].lower()]
+    album_videos = [(n, f) for n, f in numbered_videos if "engagement" not in f["name"].lower()]
+
+    if not album_videos:
+        print("  ERROR: No album videos found (non-engagement videos)")
+        print("  Upload videos named like: 1-CollegeDropout.mp4, 2-LateRegistration.mp4")
+        sys.exit(1)
+
+    print(f"\n  Album videos: {len(album_videos)}")
+    print(f"  Engagement videos: {len(engagement_videos)}")
+    print(f"  Next album index: {video_queue['current_index']}")
+
+    # Build schedule
     today = datetime.now()
-
-    # Build list of content to generate
     schedule_items = []
     for day_offset in range(args.days):
         date = today + timedelta(days=day_offset)
         date_str = date.strftime("%Y-%m-%d")
         day_name = date.strftime("%A")
-        dow = date.weekday()  # 0=Monday
+        dow = date.weekday()
 
         day_schedule = SCHEDULE.get(dow, {})
         for post_time, reel_type in day_schedule.items():
@@ -273,31 +203,26 @@ def main():
             })
 
     # Show schedule
-    print(f"\nContent schedule ({args.days} days from {today.strftime('%Y-%m-%d')}):")
+    print(f"\nPosting schedule ({args.days} days from {today.strftime('%Y-%m-%d')}):")
     print(f"{'='*60}")
+    album_idx_preview = video_queue["current_index"]
     for item in schedule_items:
-        album = ""
+        video_label = ""
         if item["type"] in ("full", "short"):
-            idx = album_queue["current_index"] % len(album_queue["albums"])
-            album = f" — {album_queue['albums'][idx]}"
-        print(f"  {item['day_name']:9s} {item['date']} {item['post_time']} UTC -> {item['type']}{album}")
+            idx = album_idx_preview % len(album_videos)
+            video_label = f" -- {album_videos[idx][1]['name']}"
+            album_idx_preview += 1
+        elif item["type"] == "engagement" and engagement_videos:
+            video_label = " -- (engagement)"
+        print(f"  {item['day_name']:9s} {item['date']} {item['post_time']} UTC -> {item['type']}{video_label}")
 
     if args.dry_run:
-        print(f"\n(Dry run — nothing generated)")
+        print(f"\n(Dry run -- nothing queued)")
         return
 
-    # Initialize Google services (will fail fast if token is invalid)
-    print(f"\nConnecting to Google services...")
-    try:
-        sheets = SheetsQueue()
-        drive = DriveStorage()
-        print("  Google services connected — OK")
-    except Exception as e:
-        print(f"ERROR: Could not connect to Google services: {e}")
-        print("  -> Check GOOGLE_TOKEN_JSON and GOOGLE_CREDENTIALS_JSON secrets")
-        sys.exit(1)
-
-    generated = 0
+    # Queue items
+    engagement_idx = 0
+    queued = 0
     skipped = 0
 
     for item in schedule_items:
@@ -306,47 +231,44 @@ def main():
         reel_type = item["type"]
 
         print(f"\n{'='*60}")
-        print(f"{item['day_name']} {date_str} {post_time} UTC — {reel_type}")
+        print(f"{item['day_name']} {date_str} {post_time} UTC -- {reel_type}")
         print(f"{'='*60}")
 
         # Skip if already queued
         if sheets.has_entry(date_str, post_time):
-            print(f"  Already queued — skipping")
+            print(f"  Already queued -- skipping")
             skipped += 1
             continue
 
-        # Generate or prepare the video
-        video_path = None
-        album_path = ""
-
+        # Pick the video
         if reel_type in ("full", "short"):
-            album_path = get_next_album(album_queue)
-            video_path = generate_reel(album_path, reel_type)
+            video = get_next_video(album_videos, video_queue)
         elif reel_type == "engagement":
-            raw_path = get_next_engagement_reel()
-            if raw_path:
-                video_path = reencode_engagement_reel(raw_path)
-
-        if not video_path or not os.path.exists(video_path):
-            print(f"  ERROR: No video generated — skipping")
+            if engagement_videos:
+                _, video = engagement_videos[engagement_idx % len(engagement_videos)]
+                engagement_idx += 1
+            else:
+                print("  WARNING: No engagement videos in Drive -- skipping")
+                continue
+        else:
             continue
 
-        # Upload to Drive
-        drive_url, drive_id = drive.upload_video(video_path)
+        drive_url = video.get("webViewLink", f"https://drive.google.com/file/d/{video['id']}/view")
+        drive_id = video["id"]
+        caption = generate_draft_caption(reel_type, video["name"])
 
-        # Generate draft caption
-        caption = generate_draft_caption(reel_type, album_path)
+        sheets.add_to_queue(date_str, post_time, reel_type, video["name"], drive_url, drive_id, caption)
+        queued += 1
 
-        # Add to queue
-        sheets.add_to_queue(date_str, post_time, reel_type, album_path, drive_url, drive_id, caption)
-        generated += 1
-
-    # Save updated album queue
-    save_album_queue(album_queue)
+    # Save updated queue tracker
+    save_video_queue(video_queue)
 
     print(f"\n{'='*60}")
-    print(f"Done! Generated: {generated}, Skipped: {skipped}")
-    print(f"Open your Google Sheet to review and approve posts.")
+    print(f"Done! Queued: {queued}, Skipped (already queued): {skipped}")
+    print(f"Next album index: {video_queue['current_index']}")
+    print(f"\nOpen your Google Sheet to review, edit captions, and approve:")
+    print(f"  Set post_time (24h UTC) and status -> 'approved'")
+    print(f"  GitHub Actions posts every 30 min when approved items are due.")
     print(f"{'='*60}")
 
 

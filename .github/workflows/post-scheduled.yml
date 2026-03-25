@@ -1,7 +1,8 @@
 name: Post Scheduled Content
 
 # Posts approved content from the Google Sheets queue when its post_time has passed.
-# Runs every 30 minutes and checks for any approved items whose UTC time is due.
+# Runs every 30 minutes. Videos are pre-rendered locally and stored in Google Drive.
+# Only posts items marked "approved" in the Sheet whose post_time (UTC) is due.
 
 on:
   schedule:

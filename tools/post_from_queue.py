@@ -187,10 +187,6 @@ def main():
             sheets.update_status(item["_row_index"], "posted", media_id=media_id)
             print(f"  Posted! Media ID: {media_id}")
 
-            # Cleanup: delete from Drive to save storage
-            if item.get("drive_id"):
-                drive.delete_video(item["drive_id"])
-
             # Cleanup local downloaded files
             for f in [download_path, post_path]:
                 if os.path.exists(f):

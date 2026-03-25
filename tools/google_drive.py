@@ -86,6 +86,15 @@ class DriveStorage:
         print(f"  Saved: {dest_path} ({file_size_mb:.1f}MB)")
         return dest_path
 
+    def list_videos(self):
+        """List all video files in the queue folder, sorted by name."""
+        results = _retry_api_call(lambda: self.service.files().list(
+            q=f"'{self.folder_id}' in parents and trashed = false",
+            fields="files(id, name, size, webViewLink)",
+            orderBy="name",
+        ).execute())
+        return results.get("files", [])
+
     def delete_video(self, file_id):
         """Delete a video from Drive (cleanup after posting)."""
         try:

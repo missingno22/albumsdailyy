@@ -24,6 +24,8 @@ Usage:
 
 import os
 import json
+import time
+import ssl
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -37,6 +39,20 @@ SCOPES = [
 
 # Column headers for the queue sheet
 HEADERS = ["date", "post_time", "type", "album", "drive_url", "drive_id", "caption", "status", "media_id"]
+
+
+def _retry_api_call(func, max_retries=3, delay=5):
+    """Retry a Google API call on transient errors (SSL, connection drops)."""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except (ssl.SSLEOFError, ConnectionError, OSError) as e:
+            if attempt < max_retries - 1:
+                wait = delay * (attempt + 1)
+                print(f"  Network error: {e} — retrying in {wait}s ({attempt + 1}/{max_retries})")
+                time.sleep(wait)
+            else:
+                raise
 
 
 def _load_env():
@@ -121,9 +137,9 @@ class SheetsQueue:
 
     def read_all(self):
         """Read all queue rows (excluding header). Returns list of dicts."""
-        result = self.sheet.values().get(
+        result = _retry_api_call(lambda: self.sheet.values().get(
             spreadsheetId=self.sheet_id, range="A2:I1000"
-        ).execute()
+        ).execute())
         rows = result.get("values", [])
         entries = []
         for i, row in enumerate(rows):
@@ -137,13 +153,13 @@ class SheetsQueue:
     def add_to_queue(self, date, post_time, reel_type, album, drive_url, drive_id, caption):
         """Add a new item to the queue with status 'pending'."""
         row = [date, post_time, reel_type, album, drive_url, drive_id, caption, "pending", ""]
-        self.sheet.values().append(
+        _retry_api_call(lambda: self.sheet.values().append(
             spreadsheetId=self.sheet_id,
             range="A:I",
             valueInputOption="RAW",
             insertDataOption="INSERT_ROWS",
             body={"values": [row]},
-        ).execute()
+        ).execute())
         print(f"  Queued: {date} {post_time} UTC — {reel_type} ({album or 'engagement'})")
 
     def get_approved(self, date=None):
@@ -180,20 +196,20 @@ class SheetsQueue:
     def update_status(self, row_index, status, media_id=None):
         """Update the status (and optionally media_id) for a row."""
         # Update status column (H)
-        self.sheet.values().update(
+        _retry_api_call(lambda: self.sheet.values().update(
             spreadsheetId=self.sheet_id,
             range=f"H{row_index}",
             valueInputOption="RAW",
             body={"values": [[status]]},
-        ).execute()
+        ).execute())
         # Update media_id column (I) if provided
         if media_id:
-            self.sheet.values().update(
+            _retry_api_call(lambda: self.sheet.values().update(
                 spreadsheetId=self.sheet_id,
                 range=f"I{row_index}",
                 valueInputOption="RAW",
                 body={"values": [[str(media_id)]]},
-            ).execute()
+            ).execute())
         print(f"  Row {row_index}: status -> {status}" + (f", media_id -> {media_id}" if media_id else ""))
 
     def has_entry(self, date, post_time):

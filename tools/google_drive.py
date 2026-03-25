@@ -17,8 +17,8 @@ import io
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
-# Reuse auth from google_sheets
-from tools.google_sheets import get_credentials, _load_env, PROJECT_ROOT
+# Reuse auth and retry from google_sheets
+from tools.google_sheets import get_credentials, _load_env, _retry_api_call, PROJECT_ROOT
 
 
 class DriveStorage:
@@ -52,17 +52,17 @@ class DriveStorage:
         }
         media = MediaFileUpload(file_path, mimetype="video/mp4", resumable=True)
 
-        file = self.service.files().create(
+        file = _retry_api_call(lambda: self.service.files().create(
             body=file_metadata, media_body=media, fields="id,webViewLink"
-        ).execute()
+        ).execute())
 
         file_id = file["id"]
 
         # Make the file viewable by anyone with the link
-        self.service.permissions().create(
+        _retry_api_call(lambda: self.service.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"},
-        ).execute()
+        ).execute())
 
         web_link = file.get("webViewLink", f"https://drive.google.com/file/d/{file_id}/view")
         print(f"  -> {web_link}")

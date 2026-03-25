@@ -1,0 +1,49 @@
+name: Post Scheduled Content
+
+# Posts approved content from the Google Sheets queue when its post_time has passed.
+# Runs every 30 minutes and checks for any approved items whose UTC time is due.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Every 30 minutes
+  workflow_dispatch: {}
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Set up Google credentials
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 -d > credentials.json
+          echo "${{ secrets.GOOGLE_TOKEN_JSON }}" | base64 -d > token.json
+
+      - name: Set up environment
+        run: |
+          cat <<EOF > .env
+          GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_DRIVE_QUEUE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_QUEUE_FOLDER_ID }}
+          INSTAGRAM_USER_ID=${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCESS_TOKEN=${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          EOF
+
+      - name: Create temp directories
+        run: mkdir -p .tmp/queue_download
+
+      - name: Post approved content
+        run: python tools/post_from_queue.py

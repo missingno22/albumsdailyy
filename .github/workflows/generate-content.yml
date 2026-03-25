@@ -1,0 +1,64 @@
+name: Generate Weekly Content
+
+# Runs every Sunday at 6am EDT (10:00 UTC) to generate the upcoming week's content.
+# Also supports manual triggering from the Actions tab.
+
+on:
+  schedule:
+    - cron: '0 10 * * 0'  # Sunday 10:00 UTC = 6:00 AM EDT
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to generate'
+        required: false
+        default: '7'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Set up Google credentials
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" | base64 -d > credentials.json
+          echo "${{ secrets.GOOGLE_TOKEN_JSON }}" | base64 -d > token.json
+
+      - name: Set up environment
+        run: |
+          cat <<EOF > .env
+          GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_DRIVE_QUEUE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_QUEUE_FOLDER_ID }}
+          INSTAGRAM_USER_ID=${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCESS_TOKEN=${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          EOF
+
+      - name: Create temp directories
+        run: mkdir -p .tmp/audio .tmp/broll .tmp/output .tmp/fonts
+
+      - name: Generate and queue content
+        run: |
+          DAYS=${{ github.event.inputs.days || '7' }}
+          python tools/generate_queue.py --days $DAYS
+
+      - name: Commit updated queue state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add album_queue.json content/engagement/.tracker
+          git diff --staged --quiet || git commit -m "Update album queue index after content generation"
+          git push

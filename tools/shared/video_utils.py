@@ -225,11 +225,18 @@ def make_text_clip(text, fontsize, duration, position, color="white", bold=True,
 
 
 def plan_broll_assignments(segments, broll_manifest):
-    """Pre-plan B-Roll assignments. Each song gets its own clip from manifest."""
+    """Pre-plan B-Roll assignments. Every song MUST get a video clip -- no static frames."""
     if isinstance(broll_manifest, dict):
         clips = broll_manifest.get("clips", [])
     else:
         clips = broll_manifest
+
+    # Collect all available video files for fallback
+    all_available = [c["file"] for c in clips if c.get("file") and os.path.exists(c["file"])]
+
+    if not all_available:
+        print("  WARNING: No B-Roll clips available at all!")
+        return [{"file": None, "start_offset": 0.0} for _ in segments]
 
     assignments = []
     prev_file = None
@@ -237,24 +244,31 @@ def plan_broll_assignments(segments, broll_manifest):
     for i, seg in enumerate(segments):
         idx = seg["song_index"]
 
+        # 1. Try the song's own clip
         file_path = None
-        if idx < len(clips) and clips[idx].get("file"):
+        if idx < len(clips) and clips[idx].get("file") and os.path.exists(clips[idx]["file"]):
             file_path = clips[idx]["file"]
 
+        # 2. Try neighboring clips (avoid same as previous)
         if not file_path:
-            for offset in [1, -1, 2, -2, 3]:
+            for offset in [1, -1, 2, -2, 3, -3, 4, -4]:
                 neighbor = idx + offset
                 if 0 <= neighbor < len(clips) and clips[neighbor].get("file"):
                     candidate = clips[neighbor]["file"]
-                    if candidate != prev_file:
+                    if os.path.exists(candidate) and candidate != prev_file:
                         file_path = candidate
                         break
 
-        if file_path == prev_file and file_path is not None:
-            for j in range(len(clips)):
-                if j != idx and clips[j].get("file") and clips[j]["file"] != prev_file:
-                    file_path = clips[j]["file"]
+        # 3. Avoid back-to-back same clip
+        if file_path == prev_file and len(all_available) > 1:
+            for f in all_available:
+                if f != prev_file:
+                    file_path = f
                     break
+
+        # 4. Last resort: cycle through all available clips (never leave None)
+        if not file_path:
+            file_path = all_available[i % len(all_available)]
 
         assignments.append({
             "file": file_path,

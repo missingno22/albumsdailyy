@@ -1,0 +1,338 @@
+{
+  "name": "Music Reel – Post Approved Reel",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Setup\n\n**1. Publish** this workflow (top-right button) so the production webhook URL is live.\n\n**2. Flask Config**: Copy the production webhook URL and paste it into your `.env` file as `N8N_WEBHOOK_URL`.\n\n**3. Timezone**: Set n8n instance timezone to `America/Denver` (Settings → General) so posts go out at 7 PM MST.\n\nNo n8n environment variables needed — Instagram credentials are sent by Flask in the webhook payload.\n\n---\n\n**Flow**: Flask approves reel → uploads video to catbox.moe → sends webhook here (with credentials + video URL + caption + date) → Prepare Data normalizes the payload → waits until 7 PM MST → creates Instagram container → polls until ready → publishes → notifies Flask",
+        "height": 380,
+        "width": 520,
+        "color": 5
+      },
+      "id": "f8d3a1b2-c4e5-4f67-8901-abcdef123456",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [160, -100]
+    },
+    {
+      "parameters": {
+        "content": "## Polling Loop\n\nThe **false** branch of \"Is Finished?\" loops back to re-check every 15 seconds.\n\nInstagram typically processes Reels in 1–5 minutes.\n\nIf `status_code` returns `ERROR`, the loop runs indefinitely — add an error-check IF node here if needed.",
+        "height": 200,
+        "width": 380,
+        "color": 3
+      },
+      "id": "a2b3c4d5-e6f7-4890-ab12-cdef34567890",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1160, -100]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "post-reel",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d",
+      "name": "Receive Approved Reel",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "webhookId": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normalize webhook data — handles both flat and nested body formats\nconst items = $input.all();\nreturn items.map(item => {\n  const data = item.json.body || item.json;\n  return {\n    json: {\n      video_url: data.video_url || '',\n      caption: data.caption || '',\n      scheduled_date: data.scheduled_date || '',\n      queue_id: data.queue_id || 0,\n      callback_url: data.callback_url || '',\n      instagram_user_id: data.instagram_user_id || '',\n      instagram_access_token: data.instagram_access_token || '',\n      post_at: (data.scheduled_date || '2026-01-01') + 'T19:00:00'\n    }\n  };\n});"
+      },
+      "id": "c3d4e5f6-a7b8-4c9d-0e1f-234567890abc",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.post_at }}"
+      },
+      "id": "2b3c4d5e-6f7a-4b8c-9d0e-2f3a4b5c6d7e",
+      "name": "Wait Until 7 PM",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v25.0/{{ $('Prepare Data').item.json.instagram_user_id }}/media",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "media_type",
+              "value": "REELS"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $('Prepare Data').item.json.video_url }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('Prepare Data').item.json.caption }}"
+            },
+            {
+              "name": "share_to_feed",
+              "value": "true"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $('Prepare Data').item.json.instagram_access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3c4d5e6f-7a8b-4c9d-0e1f-3a4b5c6d7e8f",
+      "name": "Create Instagram Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "4d5e6f7a-8b9c-4d0e-1f2a-4b5c6d7e8f90",
+      "name": "Wait 15 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.instagram.com/v25.0/{{ $('Create Instagram Container').item.json.id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "status_code"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $('Prepare Data').item.json.instagram_access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5e6f7a8b-9c0d-4e1f-2a3b-5c6d7e8f9012",
+      "name": "Check Container Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-status-finished",
+              "leftValue": "={{ $json.status_code }}",
+              "rightValue": "FINISHED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6f7a8b9c-0d1e-4f2a-3b4c-6d7e8f901234",
+      "name": "Is Finished?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v25.0/{{ $('Prepare Data').item.json.instagram_user_id }}/media_publish",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $('Create Instagram Container').item.json.id }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $('Prepare Data').item.json.instagram_access_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7a8b9c0d-1e2f-4a3b-4c5d-7e8f90123456",
+      "name": "Publish Reel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1960, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Prepare Data').item.json.callback_url }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "queue_id",
+              "value": "={{ $('Prepare Data').item.json.queue_id }}"
+            },
+            {
+              "name": "media_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "status",
+              "value": "posted"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "8b9c0d1e-2f3a-4b4c-5d6e-8f9012345678",
+      "name": "Notify Flask",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 200],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Receive Approved Reel": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Wait Until 7 PM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until 7 PM": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Container": {
+      "main": [
+        [
+          {
+            "node": "Wait 15 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 15 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Check Container Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Container Status": {
+      "main": [
+        [
+          {
+            "node": "Is Finished?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Finished?": {
+      "main": [
+        [
+          {
+            "node": "Publish Reel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 15 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Reel": {
+      "main": [
+        [
+          {
+            "node": "Notify Flask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Denver",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Music Reel Queue{% endblock %}
+
+{% block content %}
+<div class="header-row">
+    <h1>Posting Queue</h1>
+    <div class="header-actions">
+        <div class="buffer-badge {% if buffer_days < 3 %}buffer-low{% elif buffer_days < 5 %}buffer-mid{% else %}buffer-ok{% endif %}">
+            {{ buffer_days }} days buffered
+        </div>
+        <form method="POST" action="{{ url_for('fill_queue_route') }}" style="display:inline"
+              onsubmit="var b=this.querySelector('button'); setTimeout(function(){b.disabled=true; b.textContent='Filling...';}, 0);">
+            <button type="submit" class="btn btn-fill">Fill Queue</button>
+        </form>
+    </div>
+</div>
+
+<div class="stats">
+    <span class="stat">Pending: <strong>{{ counts.get('pending', 0) }}</strong></span>
+    <span class="stat">Approved: <strong>{{ counts.get('approved', 0) }}</strong></span>
+    <span class="stat">Posted: <strong>{{ counts.get('posted', 0) }}</strong></span>
+    {% if counts.get('rejected', 0) > 0 %}
+    <span class="stat">Rejected: <strong>{{ counts.get('rejected', 0) }}</strong></span>
+    {% endif %}
+</div>
+
+{% if fill_log %}
+<details class="debug-log" open>
+    <summary>Fill Queue Log</summary>
+    <pre>{{ fill_log }}</pre>
+</details>
+{% endif %}
+
+{% if entries %}
+<table>
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Album</th>
+            <th>Artist</th>
+            <th>Caption</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in entries %}
+        <tr class="status-{{ entry.status }}">
+            <td>{{ entry.scheduled_date }}</td>
+            <td>{{ entry.album_name }}</td>
+            <td>{{ entry.artist }}</td>
+            <td class="caption-cell" title="{{ entry.caption }}">{{ entry.caption[:60] }}{% if entry.caption|length > 60 %}...{% endif %}</td>
+            <td><span class="badge badge-{{ entry.status }}">{{ entry.status }}</span></td>
+            <td class="actions">
+                <a href="{{ url_for('preview', entry_id=entry.id) }}" class="btn btn-sm">Preview</a>
+                {% if entry.status == 'pending' %}
+                <form method="POST" action="{{ url_for('approve', entry_id=entry.id) }}" style="display:inline">
+                    <button type="submit" class="btn btn-sm btn-approve">Approve</button>
+                </form>
+                <form method="POST" action="{{ url_for('reject', entry_id=entry.id) }}" style="display:inline">
+                    <button type="submit" class="btn btn-sm btn-reject">Reject</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No entries in the queue yet.</p>
+    <p>Click "Fill Queue" to generate endcard clips for your albums.</p>
+</div>
+{% endif %}
+{% endblock %}

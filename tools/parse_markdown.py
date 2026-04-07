@@ -6,8 +6,8 @@ Usage: python tools/parse_markdown.py <input_markdown> [output_json]
 Input format:
     # Album Title
     ## Artist Name
-    1) Song Name - 8/10
-    2) Another Song - 7/10
+    Song Name - 8/10
+    Another Song - 7/10
     ...
 
 Output: .tmp/album_data.json (or custom path)
@@ -48,13 +48,12 @@ def parse_album_markdown(filepath):
                 artist = value
             continue
 
-        # Song line: N) Song Name - R/10
-        match = re.match(r"(\d+)\)\s+(.+?)\s*-\s*(\d+(?:\.\d+)?)/10", line)
+        # Song line: Song Name - R/10
+        match = re.match(r"(.+?)\s*-\s*(\d+(?:\.\d+)?)/10", line)
         if match:
-            rank = int(match.group(1))
-            name = match.group(2).strip()
-            rating = float(match.group(3))
-            songs.append({"rank": rank, "name": name, "rating": rating})
+            name = match.group(1).strip()
+            rating = float(match.group(2))
+            songs.append({"name": name, "rating": rating})
             continue
 
     # Validation
@@ -65,10 +64,12 @@ def parse_album_markdown(filepath):
         print("Error: No artist name found (expected '## Artist Name')")
         sys.exit(1)
     if not songs:
-        print("Error: No songs found (expected 'N) Song Name - R/10')")
+        print("Error: No songs found (expected 'Song Name - R/10')")
         sys.exit(1)
 
-    # Sort worst to best (ascending by rating, ties broken by higher rank number first)
+    # Sort worst to best (ascending by rating, ties broken by later position first)
+    for i, song in enumerate(songs):
+        song["rank"] = i + 1
     songs.sort(key=lambda s: (s["rating"], -s["rank"]))
 
     result = {

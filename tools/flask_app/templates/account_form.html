@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{% if action == 'edit' %}Edit{% else %}Add{% endif %} Account — Reel Scheduler{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('index') }}" class="back-link">&larr; Back to accounts</a>
+
+<div class="form-page">
+    <h1>{% if action == 'edit' %}Edit Account{% else %}Add Account{% endif %}</h1>
+
+    <form method="POST" class="settings-form">
+        <div class="form-group">
+            <label for="name">Instagram Handle</label>
+            <input type="text" id="name" name="name"
+                   value="{{ account.name if account else '' }}"
+                   placeholder="e.g. albumsdailyy" required>
+        </div>
+
+        <div class="form-group">
+            <label for="display_name">Display Name</label>
+            <input type="text" id="display_name" name="display_name"
+                   value="{{ account.display_name if account else '' }}"
+                   placeholder="e.g. Albums Daily">
+        </div>
+
+        <div class="form-group">
+            <label for="instagram_user_id">Instagram User ID</label>
+            <input type="text" id="instagram_user_id" name="instagram_user_id"
+                   value="{{ account.instagram_user_id if account else '' }}"
+                   placeholder="e.g. 17841400123456789" required>
+        </div>
+
+        <div class="form-group">
+            <label for="access_token">Access Token</label>
+            <input type="text" id="access_token" name="access_token"
+                   value="{{ account.access_token if account else '' }}"
+                   placeholder="Instagram Graph API access token" required>
+        </div>
+
+        <button type="submit" class="btn btn-fill">{% if action == 'edit' %}Save Changes{% else %}Add Account{% endif %}</button>
+    </form>
+
+    {% if action == 'edit' and account %}
+    <form method="POST" action="{{ url_for('account_delete', account_id=account.id) }}" class="delete-form"
+          onsubmit="return confirm('Delete @{{ account.name }}? This will also delete all queue entries.');">
+        <button type="submit" class="btn btn-reject">Delete Account</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

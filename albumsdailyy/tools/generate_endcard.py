@@ -25,9 +25,10 @@ import time
 # Add project root to path for imports
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(PROJECT_ROOT))  # parent of albumsdailyy for package imports
 
-from parse_markdown import parse_album_markdown
-from shared.video_utils import build_end_card, find_peak_segment, FPS
+from albumsdailyy.tools.parse_markdown import parse_album_markdown
+from albumsdailyy.tools.shared.video_utils import build_end_card, find_peak_segment, FPS
 
 
 ENDCARD_DURATION = 15.0
@@ -204,7 +205,7 @@ def main():
 
     start_time = time.time()
     slug = get_slug(args.album_md)
-    output_path = args.output or os.path.join(PROJECT_ROOT, "data", "endcards", f"{slug}.mp4")
+    output_path = args.output or os.path.join(PROJECT_ROOT, "outputs", "endcards", f"{slug}.mp4")
     asset_dir = os.path.join(PROJECT_ROOT, ".tmp", "endcard_assets", slug)
 
     print(f"Generating endcard for: {slug}")

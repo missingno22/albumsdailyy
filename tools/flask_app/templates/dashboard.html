@@ -1,17 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Music Reel Queue{% endblock %}
+{% block title %}@{{ account.name }} — Reel Scheduler{% endblock %}
 
 {% block content %}
+<a href="{{ url_for('index') }}" class="back-link">&larr; All accounts</a>
+
 <div class="header-row">
-    <h1>Posting Queue</h1>
+    <h1>@{{ account.name }}</h1>
     <div class="header-actions">
-        <div class="buffer-badge {% if buffer_days < 3 %}buffer-low{% elif buffer_days < 5 %}buffer-mid{% else %}buffer-ok{% endif %}">
-            {{ buffer_days }} days buffered
-        </div>
-        <form method="POST" action="{{ url_for('fill_queue_route') }}" style="display:inline"
+        <a href="{{ url_for('account_edit', account_id=account.id) }}" class="btn btn-sm">Edit Account</a>
+        <a href="{{ url_for('automation_config', account_id=account.id) }}" class="btn btn-sm">
+            {% if automation %}Edit Automation{% else %}Setup Automation{% endif %}
+        </a>
+        {% if automation %}
+        <form method="POST" action="{{ url_for('fill_queue', account_id=account.id) }}" style="display:inline"
               onsubmit="var b=this.querySelector('button'); setTimeout(function(){b.disabled=true; b.textContent='Filling...';}, 0);">
             <button type="submit" class="btn btn-fill">Fill Queue</button>
         </form>
+        {% endif %}
     </div>
 </div>
 
@@ -24,6 +29,32 @@
     {% endif %}
 </div>
 
+<!-- Upload panel -->
+<details class="upload-panel">
+    <summary>Upload Video</summary>
+    <form method="POST" action="{{ url_for('upload', account_id=account.id) }}" enctype="multipart/form-data" class="upload-form">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="title">Title</label>
+                <input type="text" id="title" name="title" placeholder="Video title" required>
+            </div>
+            <div class="form-group">
+                <label for="scheduled_datetime">Scheduled Date & Time</label>
+                <input type="datetime-local" id="scheduled_datetime" name="scheduled_datetime" required>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="caption">Caption</label>
+            <textarea id="caption" name="caption" rows="3" placeholder="Instagram caption..."></textarea>
+        </div>
+        <div class="form-group">
+            <label for="video">Video File (.mp4 / .mov)</label>
+            <input type="file" id="video" name="video" accept=".mp4,.mov" required>
+        </div>
+        <button type="submit" class="btn btn-fill">Upload & Queue</button>
+    </form>
+</details>
+
 {% if fill_log %}
 <details class="debug-log" open>
     <summary>Fill Queue Log</summary>
@@ -35,9 +66,8 @@
 <table>
     <thead>
         <tr>
-            <th>Date</th>
-            <th>Album</th>
-            <th>Artist</th>
+            <th>Scheduled</th>
+            <th>Title</th>
             <th>Caption</th>
             <th>Status</th>
             <th>Actions</th>
@@ -46,19 +76,24 @@
     <tbody>
         {% for entry in entries %}
         <tr class="status-{{ entry.status }}">
-            <td>{{ entry.scheduled_date }}</td>
-            <td>{{ entry.album_name }}</td>
-            <td>{{ entry.artist }}</td>
+            <td>{{ entry.scheduled_datetime }}</td>
+            <td>{{ entry.title }}</td>
             <td class="caption-cell" title="{{ entry.caption }}">{{ entry.caption[:60] }}{% if entry.caption|length > 60 %}...{% endif %}</td>
             <td><span class="badge badge-{{ entry.status }}">{{ entry.status }}</span></td>
             <td class="actions">
                 <a href="{{ url_for('preview', entry_id=entry.id) }}" class="btn btn-sm">Preview</a>
-                {% if entry.status == 'pending' %}
+                {% if entry.status in ('pending', 'rejected') %}
                 <form method="POST" action="{{ url_for('approve', entry_id=entry.id) }}" style="display:inline">
                     <button type="submit" class="btn btn-sm btn-approve">Approve</button>
                 </form>
                 <form method="POST" action="{{ url_for('reject', entry_id=entry.id) }}" style="display:inline">
                     <button type="submit" class="btn btn-sm btn-reject">Reject</button>
+                </form>
+                {% endif %}
+                {% if entry.status != 'posted' %}
+                <form method="POST" action="{{ url_for('delete_entry', entry_id=entry.id) }}" style="display:inline"
+                      onsubmit="return confirm('Delete this entry?');">
+                    <button type="submit" class="btn btn-sm btn-reject">Delete</button>
                 </form>
                 {% endif %}
             </td>
@@ -69,7 +104,11 @@
 {% else %}
 <div class="empty-state">
     <p>No entries in the queue yet.</p>
-    <p>Click "Fill Queue" to generate endcard clips for your albums.</p>
+    {% if automation %}
+    <p>Click "Fill Queue" to generate videos, or upload one manually.</p>
+    {% else %}
+    <p>Upload a video manually, or <a href="{{ url_for('automation_config', account_id=account.id) }}">set up automation</a> first.</p>
+    {% endif %}
 </div>
 {% endif %}
 {% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Accounts — Reel Scheduler{% endblock %}
+
+{% block content %}
+<div class="header-row">
+    <h1>Instagram Accounts</h1>
+    <a href="{{ url_for('account_new') }}" class="btn btn-fill">+ Add Account</a>
+</div>
+
+{% if accounts %}
+<div class="account-grid">
+    {% for account in accounts %}
+    <a href="{{ url_for('dashboard', account_id=account.id) }}" class="account-card">
+        <h2>@{{ account.name }}</h2>
+        {% if account.display_name and account.display_name != account.name %}
+        <p class="display-name">{{ account.display_name }}</p>
+        {% endif %}
+        <div class="account-stats">
+            <span>{{ account.total_entries or 0 }} entries</span>
+            {% if account.pending_count %}
+            <span class="badge badge-pending">{{ account.pending_count }} pending</span>
+            {% endif %}
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No Instagram accounts configured yet.</p>
+    <p>Click "+ Add Account" to get started.</p>
+</div>
+{% endif %}
+{% endblock %}

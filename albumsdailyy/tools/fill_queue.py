@@ -6,12 +6,13 @@ Usage:
     python tools/fill_queue.py --days 14
     python tools/fill_queue.py --draft
 
-Scans albums/ for album markdown files, generates endcard videos for unposted
+Scans inputs/ for album markdown files, generates endcard videos for unposted
 albums, and queues them in SQLite. Stops when all albums have been queued.
 """
 
 import argparse
 import glob
+import json as _json
 import os
 import re
 import subprocess
@@ -20,9 +21,10 @@ from datetime import datetime, timedelta
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(PROJECT_ROOT))  # parent of albumsdailyy for package imports
 
-from parse_markdown import parse_album_markdown
-from flask_app.models import (
+from albumsdailyy.tools.parse_markdown import parse_album_markdown
+from albumsdailyy.tools.flask_app.models import (
     init_db, has_entry_for_date, is_album_queued_or_posted,
     insert_queue_entry, get_rotation_index, advance_rotation,
     get_pending_count, get_buffer_days,
@@ -31,7 +33,7 @@ from flask_app.models import (
 
 def get_albums():
     """Get all album markdown files sorted by number prefix."""
-    pattern = os.path.join(PROJECT_ROOT, "albums", "*.md")
+    pattern = os.path.join(PROJECT_ROOT, "inputs", "*.md")
     files = glob.glob(pattern)
 
     def sort_key(path):
@@ -43,7 +45,7 @@ def get_albums():
 
 
 def get_slug(album_path):
-    """'albums/1-CollegeDropout.md' -> '1-CollegeDropout'"""
+    """'inputs/1-CollegeDropout.md' -> '1-CollegeDropout'"""
     return os.path.splitext(os.path.basename(album_path))[0]
 
 
@@ -66,7 +68,7 @@ def generate_caption(album_data):
 
 def ensure_endcard(album_path, slug, draft=False):
     """Generate endcard video if it doesn't exist. Returns video path."""
-    video_path = os.path.join(PROJECT_ROOT, "data", "endcards", f"{slug}.mp4")
+    video_path = os.path.join(PROJECT_ROOT, "outputs", "endcards", f"{slug}.mp4")
 
     if os.path.exists(video_path):
         print(f"  [endcard] Already exists: {video_path}")
@@ -104,13 +106,13 @@ def ensure_endcard(album_path, slug, draft=False):
     return None
 
 
-def fill_queue(days_ahead=7, draft=False):
+def fill_queue(days_ahead=7, draft=False, json_output=False):
     """Fill the queue with endcard posts for the next N days."""
     init_db()
     albums = get_albums()
 
     if not albums:
-        print("No album files found in albums/")
+        print("No album files found in inputs/")
         return
 
     print(f"[scan] Found {len(albums)} albums: {[get_slug(a) for a in albums]}")
@@ -188,6 +190,15 @@ def fill_queue(days_ahead=7, draft=False):
             caption=caption,
         )
 
+        # Emit JSON line for Reel Scheduler integration
+        if json_output:
+            print(_json.dumps({
+                "title": album_data["album"],
+                "video_path": os.path.abspath(video_path),
+                "caption": caption,
+                "scheduled_datetime": f"{date_str}T19:00:00",
+            }), flush=True)
+
         advance_rotation()
         added += 1
         print(f"  [queued] {album_data['album']} scheduled for {date_str}")
@@ -209,9 +220,11 @@ def main():
     parser = argparse.ArgumentParser(description="Fill posting queue with endcard clips")
     parser.add_argument("--days", type=int, default=7, help="Days ahead to fill (default: 7)")
     parser.add_argument("--draft", action="store_true", help="Generate draft-quality endcards")
+    parser.add_argument("--json", action="store_true",
+                        help="Output JSON lines for Reel Scheduler integration")
     args = parser.parse_args()
 
-    fill_queue(days_ahead=args.days, draft=args.draft)
+    fill_queue(days_ahead=args.days, draft=args.draft, json_output=args.json)
 
 
 if __name__ == "__main__":

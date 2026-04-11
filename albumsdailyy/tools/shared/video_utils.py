@@ -490,8 +490,9 @@ def build_end_card(album_data, cover_path, broll_manifest, broll_dir, duration=6
         song_spacing = 36
     font_song = ImageFont.truetype(FONT_IMPACT, song_fontsize)
 
-    # Roll-in animation parameters
-    roll_distance = 400
+    # Roll-in animation parameters — cap so no clip starts below the canvas
+    last_final_y = song_list_start_y + (num_songs - 1) * song_spacing
+    roll_distance = min(400, max(20, HEIGHT - last_final_y - song_spacing))
     roll_duration = 0.4
     stagger_delay = 0.08  # delay between each line starting
 

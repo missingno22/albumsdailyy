@@ -15,16 +15,20 @@ No full-album B-Roll downloads. Much faster than generate_endcard.py.
 
 import argparse
 import glob
+import json
 import os
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(PROJECT_ROOT))  # parent of albumsdailyy for package imports
 
-from parse_markdown import parse_album_markdown
-from shared.video_utils import build_end_card, find_peak_segment, FPS
+from albumsdailyy.tools.parse_markdown import parse_album_markdown
+from albumsdailyy.tools.shared.video_utils import build_end_card, find_peak_segment, FPS
 
 
 ENDCARD_DURATION = 15.0
@@ -35,36 +39,57 @@ def get_slug(album_path):
     return os.path.splitext(os.path.basename(album_path))[0]
 
 
+def download_cover_itunes(album, artist, output_dir):
+    """Download official album cover from iTunes Search API (free, no auth)."""
+    cover_path = os.path.join(output_dir, "album_cover.jpg")
+    query = urllib.parse.urlencode({"term": f"{artist} {album}", "entity": "album", "limit": 10})
+    url = f"https://itunes.apple.com/search?{query}"
+    print(f"  iTunes search: {artist} - {album}", flush=True)
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+
+        # Find best match — prefer exact album name match
+        album_lower = album.lower().strip()
+        best = None
+        for r in data.get("results", []):
+            name = r.get("collectionName", "")
+            if album_lower in name.lower():
+                best = r
+                break
+        if not best and data.get("results"):
+            best = data["results"][0]
+
+        if best:
+            # Get highest resolution: replace 100x100 with 1200x1200
+            art_url = best["artworkUrl100"].replace("100x100", "1200x1200")
+            print(f"  Found: {best['collectionName']} by {best['artistName']}", flush=True)
+            urllib.request.urlretrieve(art_url, cover_path)
+            print(f"  Saved: {cover_path}", flush=True)
+            return cover_path
+    except Exception as e:
+        print(f"  iTunes failed: {e}", flush=True)
+
+    return None
+
+
 def download_cover(album, artist, output_dir):
-    """Download album cover thumbnail. Fast (~2-5s)."""
+    """Download official album cover art. Uses iTunes API, no yt-dlp thumbnails."""
     os.makedirs(output_dir, exist_ok=True)
-    cover_base = os.path.join(output_dir, "album_cover")
 
     # Check cache
-    for ext in ["*.webp", "*.jpg", "*.png"]:
+    for ext in ["*.jpg", "*.png", "*.webp"]:
         matches = glob.glob(os.path.join(output_dir, f"album_cover{ext.lstrip('*')}"))
         if matches:
             print(f"  Cached: {matches[0]}", flush=True)
             return matches[0]
 
-    query = f"{artist} {album} album cover"
-    print(f"  Searching: {query}", flush=True)
-    cmd = [
-        "yt-dlp", f"ytsearch1:{query}",
-        "--write-thumbnail", "--skip-download",
-        "-o", cover_base,
-        "--no-playlist", "--socket-timeout", "30",
-        "--no-warnings", "-q",
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        for ext in ["*.webp", "*.jpg", "*.png"]:
-            matches = glob.glob(os.path.join(output_dir, f"album_cover{ext.lstrip('*')}"))
-            if matches:
-                print(f"  Saved: {matches[0]}", flush=True)
-                return matches[0]
-    except subprocess.TimeoutExpired:
-        pass
+    # iTunes API — returns actual album artwork
+    result = download_cover_itunes(album, artist, output_dir)
+    if result:
+        return result
 
     print(f"  Warning: Could not download cover", flush=True)
     return None
@@ -172,7 +197,7 @@ def main():
 
     start_time = time.time()
     slug = get_slug(args.album_md)
-    output_path = args.output or os.path.join(PROJECT_ROOT, "data", "endcards", f"{slug}.mp4")
+    output_path = args.output or os.path.join(PROJECT_ROOT, "outputs", "endcards", f"{slug}.mp4")
     asset_dir = os.path.join(PROJECT_ROOT, ".tmp", "endcard_assets", slug)
 
     print(f"Generating endcard (lite) for: {slug}", flush=True)

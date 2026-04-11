@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Automation — @{{ account.name }}{% endblock %}
+
+{% block content %}
+<a href="{{ url_for('dashboard', account_id=account.id) }}" class="back-link">&larr; Back to @{{ account.name }}</a>
+
+<div class="form-page">
+    <h1>{% if automation %}Edit Automation{% else %}Add Automation{% endif %}</h1>
+    <p class="form-subtitle">
+        Configure a fill queue script for <strong>@{{ account.name }}</strong>.
+        The script should output one JSON line per video:
+    </p>
+    <pre class="json-example">{"title": "...", "video_path": "/abs/path/to/video.mp4", "caption": "...", "scheduled_datetime": "2026-04-15T19:00:00"}</pre>
+
+    <form method="POST" class="settings-form">
+        <div class="form-group">
+            <label for="name">Automation Name</label>
+            <input type="text" id="name" name="name"
+                   value="{{ automation.name if automation else '' }}"
+                   placeholder="e.g. Albums Daily Fill Queue" required>
+        </div>
+
+        <div class="form-group">
+            <label for="script_command">Script Command</label>
+            <input type="text" id="script_command" name="script_command"
+                   value="{{ automation.script_command if automation else '' }}"
+                   placeholder="e.g. python albumsdailyy/tools/fill_queue.py --json" required>
+            <small class="field-hint">The command to run. Use <code>--json</code> flag for JSON output mode.</small>
+        </div>
+
+        <div class="form-group">
+            <label for="working_directory">Working Directory</label>
+            <input type="text" id="working_directory" name="working_directory"
+                   value="{{ automation.working_directory if automation else '' }}"
+                   placeholder="e.g. c:\Users\aiden\Desktop\Root\Personal\Claude Code\Music Reel" required>
+            <small class="field-hint">The directory to run the script from.</small>
+        </div>
+
+        <button type="submit" class="btn btn-fill">{% if automation %}Save Changes{% else %}Add Automation{% endif %}</button>
+    </form>
+
+    {% if automation %}
+    <form method="POST" action="{{ url_for('automation_delete', account_id=account.id) }}" class="delete-form"
+          onsubmit="return confirm('Remove this automation?');">
+        <button type="submit" class="btn btn-reject">Remove Automation</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

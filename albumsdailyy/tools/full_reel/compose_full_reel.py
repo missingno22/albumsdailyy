@@ -29,7 +29,7 @@ from moviepy import (
 # Add tools directory to path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from shared import (
+from albumsdailyy.tools.shared import (
     WIDTH, HEIGHT, FPS,
     FONT_BOLD, FONT_REGULAR, FONT_IMPACT, FONT_DISPLAY,
     rating_color, find_peak_segment, crop_to_vertical,

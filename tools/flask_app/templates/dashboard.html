@@ -55,6 +55,47 @@
     </form>
 </details>
 
+{% if source_available %}
+<details class="upload-panel" {% if source_entries %}open{% endif %}>
+    <summary>Source Queue ({{ source_entries|length }})
+        <small style="font-weight:normal; opacity:0.7;">— project db tracking what's been processed</small>
+    </summary>
+    {% if source_entries %}
+    <table>
+        <thead>
+            <tr>
+                <th>Scheduled</th>
+                <th>Title</th>
+                <th>Artist / Key</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in source_entries %}
+            <tr class="status-{{ row._status or 'pending' }}">
+                <td>{{ row._scheduled }}</td>
+                <td>{{ row._title }}</td>
+                <td>{{ row._subtitle }}</td>
+                <td>{% if row._status %}<span class="badge badge-{{ row._status }}">{{ row._status }}</span>{% endif %}</td>
+                <td class="actions">
+                    <form method="POST"
+                          action="{{ url_for('source_queue_delete', account_id=account.id, entry_id=row.id) }}"
+                          style="display:inline"
+                          onsubmit="return confirm('Remove {{ row._title|e }} from source queue? (the album becomes eligible for re-queueing)');">
+                        <button type="submit" class="btn btn-sm btn-reject">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="padding:10px;">Source queue is empty.</p>
+    {% endif %}
+</details>
+{% endif %}
+
 {% if fill_log %}
 <details class="debug-log" open>
     <summary>Fill Queue Log</summary>

@@ -10,4 +10,6 @@ from .video_utils import (
     plan_broll_assignments,
     build_end_card,
     build_segment,
+    fit_text_image,
+    resolve_album_font,
 )

@@ -12,6 +12,14 @@ import argparse
 import os
 import sys
 
+# On Windows, default stdout/stderr are cp1252 which can't print emoji from
+# subprocess output (e.g. Reddit post titles with 🤔). Force UTF-8 with replace.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
 
 from flask_app.app import create_app

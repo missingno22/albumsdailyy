@@ -26,6 +26,7 @@ def parse_album_markdown(filepath):
     album = None
     artist = None
     album_number = None
+    font_name = None
     songs = []
 
     for i, line in enumerate(lines, 1):
@@ -38,14 +39,24 @@ def parse_album_markdown(filepath):
             album = line[2:].strip()
             continue
 
-        # H2: Artist name or album number
+        # H2 header — order-based:
+        #   first non-numeric H2 = artist
+        #   numeric H2 = album number
+        #   subsequent non-numeric H2 = font name (family or filename)
         if line.startswith("## "):
             value = line[3:].strip()
-            # If it's just a number, it's the album number
             if re.match(r"^\d+$", value):
                 album_number = int(value)
-            else:
+            elif artist is None:
                 artist = value
+            elif font_name is None:
+                font_name = value
+            continue
+
+        # Back-compat: legacy `font: Metal Mania` inline style
+        fmatch = re.match(r"(?i)^font\s*:\s*(.+)$", line)
+        if fmatch:
+            font_name = fmatch.group(1).strip()
             continue
 
         # Song line: Song Name - R/10
@@ -80,6 +91,8 @@ def parse_album_markdown(filepath):
     }
     if album_number is not None:
         result["album_number"] = album_number
+    if font_name:
+        result["font"] = font_name
     return result
 
 

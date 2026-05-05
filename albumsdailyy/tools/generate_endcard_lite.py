@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools"))
 sys.path.insert(0, os.path.dirname(PROJECT_ROOT))  # parent of albumsdailyy for package imports
 
 from albumsdailyy.tools.parse_markdown import parse_album_markdown
-from albumsdailyy.tools.shared.video_utils import build_end_card, find_peak_segment, FPS
+from albumsdailyy.tools.shared.video_utils import build_end_card, find_peak_segment, FPS, resolve_album_font
 
 
 ENDCARD_DURATION = 15.0
@@ -232,12 +232,16 @@ def main():
 
     # 5. Render
     print(f"\n[5/5] Rendering endcard ({ENDCARD_DURATION}s)...", flush=True)
+    album_font = resolve_album_font(album_data.get("font")) if album_data.get("font") else None
+    if album_font:
+        print(f"  Using album font: {album_font}", flush=True)
     endcard = build_end_card(
         album_data,
         cover_path=cover_path,
         broll_manifest=broll_manifest,
         broll_dir=broll_dir,
         duration=ENDCARD_DURATION,
+        album_font=album_font,
     )
 
     # Attach audio

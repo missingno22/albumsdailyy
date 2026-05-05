@@ -36,6 +36,7 @@ from albumsdailyy.tools.shared import (
     wrap_text, make_text_clip, plan_broll_assignments,
     build_end_card, build_segment,
 )
+from albumsdailyy.tools.shared.video_utils import fit_text_image, resolve_album_font
 
 
 def _blur_frame(frame, radius=20):
@@ -57,40 +58,16 @@ def _ease_out_bounce(t):
     return 1.0 - (1.0 - t) ** 3 + 0.1 * np.sin(t * np.pi * 2) * (1.0 - t)
 
 
-def _render_text_image(text, font_path, fontsize, fill, stroke_width=4, stroke_fill="black"):
-    """Render text to a transparent RGBA PIL image, return (image, width, height)."""
-    font = ImageFont.truetype(font_path, fontsize)
-    tmp_img = Image.new("RGBA", (1, 1))
-    tmp_draw = ImageDraw.Draw(tmp_img)
-
-    max_width = WIDTH - 100
-    bbox = tmp_draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    text_w = bbox[2] - bbox[0]
-    if text_w > max_width:
-        text = wrap_text(text, font, max_width)
-        while fontsize > 28:
-            bbox = font.getbbox(text.split("\n")[0])
-            if bbox[2] - bbox[0] <= max_width:
-                break
-            fontsize -= 4
-            font = ImageFont.truetype(font_path, fontsize)
-            text = wrap_text(text.replace("\n", " "), font, max_width)
-
-    if "\n" in text:
-        bbox = tmp_draw.multiline_textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    else:
-        bbox = tmp_draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-
-    img_w = bbox[2] - bbox[0] + 16
-    img_h = bbox[3] - bbox[1] + 16
-
-    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw_method = draw.multiline_text if "\n" in text else draw.text
-    draw_method((8 - bbox[0], 8 - bbox[1]), text, font=font, fill=fill,
-                stroke_width=stroke_width, stroke_fill=stroke_fill, align="center")
-
-    return img, img_w, img_h
+def _render_text_image(text, font_path, fontsize, fill, stroke_width=4, stroke_fill="black",
+                       max_width=None, max_height=None, min_size=28):
+    """Thin wrapper around fit_text_image — fits text to a box with shrink + wrap."""
+    mw = max_width if max_width is not None else (WIDTH - 100)
+    mh = max_height if max_height is not None else (HEIGHT // 2 - 100)
+    img, w, h, _ = fit_text_image(
+        text, font_path, mw, mh, fontsize,
+        fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill, min_size=min_size,
+    )
+    return img, w, h
 
 
 def _generate_title_hook(album_data):
@@ -108,7 +85,7 @@ def _generate_title_hook(album_data):
 
 
 def build_title_card(album_data, cover_path, broll_manifest=None, broll_dir=None,
-                     audio_dir=None, audio_manifest=None, duration=3.0):
+                     audio_dir=None, audio_manifest=None, duration=3.0, album_font=None):
     """Build the full reel title card: blurred B-Roll background, hook text + album name with slot-machine roll-in."""
     album_name = album_data["album"]
     artist_name = album_data["artist"]
@@ -138,21 +115,30 @@ def build_title_card(album_data, cover_path, broll_manifest=None, broll_dir=None
     layers = [bg_clip]
 
     # --- Render hook text and album identification as separate animated clips ---
-    # Hook text (provocative scroll-stopper)
+    headline_font = album_font or FONT_IMPACT
+    # Split the canvas into hook (top half) and album-label (bottom half), each with height budgets.
+    hook_max_h = int(HEIGHT * 0.35)
+    label_max_h = int(HEIGHT * 0.20)
+
     hook_text = _generate_title_hook(album_data)
     title_img, title_w, title_h = _render_text_image(
-        hook_text, FONT_IMPACT, 90, fill="#FFD700", stroke_width=5,
+        hook_text, headline_font, 90, fill="#FFD700", stroke_width=5,
+        max_width=WIDTH - 100, max_height=hook_max_h, min_size=36,
     )
     title_final_x = (WIDTH - title_w) // 2
-    title_final_y = (HEIGHT // 2) - title_h - 15  # centered pair, hook above midpoint
+    title_final_y = (HEIGHT // 2) - title_h - 15
 
-    # Album identification (album name + artist)
     album_label = f"{album_name} — {artist_name}"
     artist_img, artist_w, artist_h = _render_text_image(
         album_label, FONT_DISPLAY, 52, fill="#CCCCCC", stroke_width=3,
+        max_width=WIDTH - 100, max_height=label_max_h, min_size=24,
     )
     artist_final_x = (WIDTH - artist_w) // 2
-    artist_final_y = (HEIGHT // 2) + 15  # just below midpoint
+    artist_final_y = (HEIGHT // 2) + 15
+
+    # Clamp positions so nothing renders off-canvas
+    title_final_y = max(40, title_final_y)
+    artist_final_y = min(HEIGHT - artist_h - 40, artist_final_y)
 
     # Slot machine roll-in animation parameters
     roll_distance = 600  # pixels to travel from below
@@ -255,13 +241,22 @@ def main():
     print(f"Composing full reel: {len(segments)} segments, {timing_data['total_duration']}s total")
     print(f"Album: {album_data['album']} by {album_data['artist']}")
 
+    # Per-album font (optional `font:` field in markdown)
+    album_font = None
+    font_name = album_data.get("font")
+    if font_name:
+        print(f"Resolving album font: {font_name}")
+        album_font = resolve_album_font(font_name)
+        print(f"  Using font: {album_font}")
+
     # Build title card
     cover_path = None
     if isinstance(broll_manifest, dict):
         cover_path = broll_manifest.get("album_cover")
     print(f"Building title card...")
     title_card = build_title_card(album_data, cover_path, broll_manifest, args.broll_dir,
-                                  audio_dir=args.audio_dir, audio_manifest=audio_manifest)
+                                  audio_dir=args.audio_dir, audio_manifest=audio_manifest,
+                                  album_font=album_font)
     from moviepy.video.fx import FadeIn, FadeOut
     title_card = title_card.with_effects([FadeIn(0.5), FadeOut(0.5)])
 
@@ -285,6 +280,7 @@ def main():
             segment, args.audio_dir, args.broll_dir, broll_manifest, audio_manifest,
             broll_assignment=broll_assignments[i],
             fade_duration=fade,
+            album_font=album_font,
         )
         video_segments.append(clip)
 
@@ -300,7 +296,8 @@ def main():
     # Build end card
     print(f"Building end card...")
     end_card_duration = 6.0
-    end_card = build_end_card(album_data, cover_path, broll_manifest, args.broll_dir, duration=end_card_duration)
+    end_card = build_end_card(album_data, cover_path, broll_manifest, args.broll_dir,
+                              duration=end_card_duration, album_font=album_font)
     from moviepy.video.fx import FadeIn, FadeOut
     from moviepy.audio.fx import AudioFadeOut
     end_card = end_card.with_effects([FadeIn(1.0), FadeOut(0.5)])

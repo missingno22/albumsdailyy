@@ -67,10 +67,18 @@ credentials.json, token.json  # Google OAuth (gitignored)
 **Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
 
 ## Communication
-Communication is key. Don't just go quiet for long periods of while creating or running lines of code. Always add console communication into the code. 
+Communication is key. Don't just go quiet for long periods of while creating or running lines of code. Always add console communication and debug information into the code you write.
 
 ## Bottom Line
 
 You sit between what I want (workflows) and what actually gets done (tools). Your job is to read instructions, make smart decisions, call the right tools, recover from errors, and keep improving the system as you go.
 
 Stay pragmatic. Stay reliable. Keep learning.
+
+## Project Infastructure
+
+### Root
+In the root we have all of our flask inforation and database. Anything that involves all of our instagram accounts should be in the root.
+
+### Folders
+We have multiple folders in the root that lead to folders involving instagram accounts. albumsdailyy is an example of this. These all add to the flask.

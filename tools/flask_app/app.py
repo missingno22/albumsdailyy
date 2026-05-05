@@ -29,30 +29,111 @@ from flask_app.models import (
     insert_queue_entry, update_status, update_entry,
     delete_queue_entry,
     get_automation, upsert_automation, delete_automation,
+    list_source_queue, delete_source_queue_entry, get_source_queue_entry,
 )
 
 import subprocess
 
-def upload_to_catbox(file_path):
-    """Upload a video to catbox.moe and return a direct public URL."""
-    filename = os.path.basename(file_path)
-    print(f"  Uploading {filename} to catbox.moe...", flush=True)
-    result = subprocess.run(
-        [
-            "curl", "-s",
-            "-F", "reqtype=fileupload",
-            "-F", f"fileToUpload=@{file_path}",
-            "https://catbox.moe/user/api.php",
-        ],
-        capture_output=True, text=True, timeout=300,
-    )
+def _run_curl_upload(name, curl_args, timeout=300):
+    """Run a curl upload. Returns stdout on success (rc=0 and non-empty), else raises."""
+    result = subprocess.run(curl_args, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-        raise RuntimeError(f"Catbox upload failed: {result.stderr}")
-    url = result.stdout.strip()
+        raise RuntimeError(f"{name} curl failed (rc={result.returncode}): {result.stderr[:200]}")
+    body = (result.stdout or "").strip()
+    if not body:
+        raise RuntimeError(f"{name} returned empty response")
+    return body
+
+
+def _upload_catbox(file_path):
+    body = _run_curl_upload("catbox", [
+        "curl", "-s", "--max-time", "300",
+        "-F", "reqtype=fileupload",
+        "-F", f"fileToUpload=@{file_path}",
+        "https://catbox.moe/user/api.php",
+    ])
+    if not body.startswith("http"):
+        raise RuntimeError(f"catbox non-URL response: {body[:200]}")
+    return body
+
+
+def _upload_litterbox(file_path):
+    # Catbox-operated temp host. Separate service; usually up when main catbox is paused.
+    # 72h expiry is fine — Instagram fetches within minutes of the webhook firing.
+    body = _run_curl_upload("litterbox", [
+        "curl", "-s", "--max-time", "300",
+        "-F", "reqtype=fileupload",
+        "-F", "time=72h",
+        "-F", f"fileToUpload=@{file_path}",
+        "https://litterbox.catbox.moe/resources/internals/api.php",
+    ])
+    if not body.startswith("http"):
+        raise RuntimeError(f"litterbox non-URL response: {body[:200]}")
+    return body
+
+
+def _upload_0x0(file_path):
+    body = _run_curl_upload("0x0.st", [
+        "curl", "-s", "--max-time", "300",
+        "-F", f"file=@{file_path}",
+        "-H", "User-Agent: reel-scheduler/1.0",
+        "https://0x0.st",
+    ])
+    if not body.startswith("http"):
+        raise RuntimeError(f"0x0.st non-URL response: {body[:200]}")
+    return body
+
+
+def _upload_uguu(file_path):
+    body = _run_curl_upload("uguu.se", [
+        "curl", "-s", "--max-time", "300",
+        "-F", f"files[]=@{file_path}",
+        "https://uguu.se/upload.php",
+    ])
+    try:
+        data = json.loads(body)
+        url = data["files"][0]["url"]
+    except Exception:
+        raise RuntimeError(f"uguu.se bad JSON: {body[:200]}")
     if not url.startswith("http"):
-        raise RuntimeError(f"Unexpected catbox response: {url}")
-    print(f"  Uploaded: {url}", flush=True)
+        raise RuntimeError(f"uguu.se non-URL: {url}")
     return url
+
+
+# Order matters: catbox first (longest retention), then fallbacks in reliability order.
+_UPLOAD_PROVIDERS = [
+    ("catbox.moe", _upload_catbox),
+    ("litterbox.catbox.moe", _upload_litterbox),
+    ("0x0.st", _upload_0x0),
+    ("uguu.se", _upload_uguu),
+]
+
+
+def upload_to_catbox(file_path):
+    """
+    Upload a video to a public anon host and return a direct URL.
+
+    Tries catbox.moe first (longest retention), then falls back through
+    litterbox, 0x0.st, and uguu.se. First success wins.
+
+    Name kept as `upload_to_catbox` for callsite stability — the function is
+    now provider-agnostic.
+    """
+    filename = os.path.basename(file_path)
+    errors = []
+    for name, fn in _UPLOAD_PROVIDERS:
+        print(f"  Uploading {filename} to {name}...", flush=True)
+        try:
+            url = fn(file_path)
+            print(f"  Uploaded via {name}: {url}", flush=True)
+            return url
+        except Exception as e:
+            msg = str(e)[:200]
+            print(f"  [{name}] failed: {msg}", flush=True)
+            errors.append(f"{name}: {msg}")
+    raise RuntimeError(
+        "All upload providers failed:\n  - " + "\n  - ".join(errors)
+    )
 
 UPLOADS_DIR = os.path.join(PROJECT_ROOT, "data", "uploads")
 ALLOWED_EXTENSIONS = {".mp4", ".mov"}
@@ -211,8 +292,15 @@ def create_app():
         counts = get_pending_count(account_id)
         automation = get_automation(account_id)
         fill_log = session.pop("fill_queue_log", None)
+        source_entries = []
+        source_available = False
+        if automation and automation.get("source_db_path"):
+            source_available = os.path.exists(automation["source_db_path"])
+            if source_available:
+                source_entries = list_source_queue(automation["source_db_path"])
         return render_template("dashboard.html", account=account, entries=entries,
-                               counts=counts, automation=automation, fill_log=fill_log)
+                               counts=counts, automation=automation, fill_log=fill_log,
+                               source_entries=source_entries, source_available=source_available)
 
     # ------------------------------------------------------------------ #
     #  Upload
@@ -422,16 +510,21 @@ def create_app():
             name = request.form.get("name", "").strip()
             script_command = request.form.get("script_command", "").strip()
             working_directory = request.form.get("working_directory", "").strip()
+            source_db_path = request.form.get("source_db_path", "").strip() or None
 
             if not name or not script_command or not working_directory:
-                flash("All fields are required.")
+                flash("Name, command, and working directory are required.")
                 return render_template("automation_form.html", account=account, automation=automation)
 
             if not os.path.isdir(working_directory):
                 flash(f"Working directory does not exist: {working_directory}")
                 return render_template("automation_form.html", account=account, automation=automation)
 
-            upsert_automation(account_id, name, script_command, working_directory)
+            if source_db_path and not os.path.exists(source_db_path):
+                flash(f"Warning: source db not found yet at {source_db_path} (saved anyway)")
+
+            upsert_automation(account_id, name, script_command, working_directory,
+                              source_db_path=source_db_path)
             flash(f"Automation '{name}' saved.")
             return redirect(url_for("dashboard", account_id=account_id))
 
@@ -469,7 +562,8 @@ def create_app():
                 shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                encoding="utf-8", errors="replace",
+                env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
             )
 
             for line in process.stdout:
@@ -512,6 +606,35 @@ def create_app():
         except Exception as e:
             flash(f"Error running fill queue: {e}")
 
+        return redirect(url_for("dashboard", account_id=account_id))
+
+    # ------------------------------------------------------------------ #
+    #  Source queue (external project db) management
+    # ------------------------------------------------------------------ #
+
+    @app.route("/accounts/<int:account_id>/source-queue/<int:entry_id>/delete", methods=["POST"])
+    def source_queue_delete(account_id, entry_id):
+        automation = get_automation(account_id)
+        if not automation or not automation.get("source_db_path"):
+            flash("No source db configured for this automation.")
+            return redirect(url_for("dashboard", account_id=account_id))
+
+        src = automation["source_db_path"]
+        if not os.path.exists(src):
+            flash(f"Source db not found: {src}")
+            return redirect(url_for("dashboard", account_id=account_id))
+
+        row = get_source_queue_entry(src, entry_id)
+        if not row:
+            flash("Source entry not found.")
+            return redirect(url_for("dashboard", account_id=account_id))
+
+        ok = delete_source_queue_entry(src, entry_id)
+        label = row.get("album_name") or row.get("title") or f"#{entry_id}"
+        if ok:
+            flash(f"Removed from source queue: {label}")
+        else:
+            flash(f"Could not remove source entry: {label}")
         return redirect(url_for("dashboard", account_id=account_id))
 
     # ------------------------------------------------------------------ #

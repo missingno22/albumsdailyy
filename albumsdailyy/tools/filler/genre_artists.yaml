@@ -1,0 +1,83 @@
+# Curated popular artists by genre for the filler-post cycle.
+# After each album-review/stats cycle, the filler post pulls a TikTok meme/clip
+# featuring a random artist from the same genre as the album-review artist.
+#
+# Edit freely. The lookup picks one at random; longer lists give more variety.
+# Genre keys are matched (loosely) against Spotify artist.genres.
+# Falls back to 'hip-hop' if no match.
+
+hip-hop:
+  - Drake
+  - Travis Scott
+  - Future
+  - Lil Baby
+  - 21 Savage
+  - Playboi Carti
+  - Lil Uzi Vert
+  - Don Toliver
+  - Gunna
+  - Lil Yachty
+  - Kendrick Lamar
+  - J. Cole
+  - Tyler, The Creator
+  - Metro Boomin
+  - Central Cee
+  - Ice Spice
+
+r&b:
+  - The Weeknd
+  - SZA
+  - Frank Ocean
+  - Bryson Tiller
+  - Brent Faiyaz
+  - Summer Walker
+  - PARTYNEXTDOOR
+  - dvsn
+  - Daniel Caesar
+  - Giveon
+
+pop:
+  - Taylor Swift
+  - Olivia Rodrigo
+  - Sabrina Carpenter
+  - Billie Eilish
+  - Doja Cat
+  - Ariana Grande
+  - Charli XCX
+  - Chappell Roan
+
+rock:
+  - Foo Fighters
+  - Red Hot Chili Peppers
+  - Arctic Monkeys
+  - The Killers
+  - Greta Van Fleet
+  - Imagine Dragons
+
+indie:
+  - Phoebe Bridgers
+  - Mitski
+  - Beach House
+  - Tame Impala
+  - Mac DeMarco
+  - Clairo
+  - boygenius
+
+country:
+  - Morgan Wallen
+  - Zach Bryan
+  - Luke Combs
+  - Chris Stapleton
+  - Kacey Musgraves
+  - Jelly Roll
+
+electronic:
+  - Skrillex
+  - Fred again..
+  - Flume
+  - ODESZA
+  - Disclosure
+  - Porter Robinson
+
+# Default bucket when artist genre doesn't match any of the above
+default: hip-hop

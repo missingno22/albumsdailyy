@@ -1,5 +1,8 @@
-moviepy>=2.0.0
-yt-dlp>=2024.0.0
-numpy>=1.24.0
-Pillow>=10.0.0
-flask>=3.0.0
+flask
+yt-dlp
+openai>=1.0
+playwright>=1.40
+pytrends>=4.9
+edge-tts>=6.1
+Pillow
+requests

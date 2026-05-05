@@ -55,9 +55,17 @@ def init_db(db_path=None):
                 name                TEXT NOT NULL,
                 script_command      TEXT NOT NULL,
                 working_directory   TEXT NOT NULL,
+                source_db_path      TEXT,
                 created_at          TEXT DEFAULT (datetime('now'))
             );
 
+            -- Migration: add source_db_path to pre-existing automations table
+            ;
+        """)
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(automations)").fetchall()]
+        if "source_db_path" not in cols:
+            conn.execute("ALTER TABLE automations ADD COLUMN source_db_path TEXT")
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS queue (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 account_id          INTEGER NOT NULL REFERENCES instagram_accounts(id) ON DELETE CASCADE,
@@ -229,17 +237,84 @@ def get_automation(account_id, db_path=None):
     return dict(row) if row else None
 
 
-def upsert_automation(account_id, name, script_command, working_directory, db_path=None):
+def upsert_automation(account_id, name, script_command, working_directory,
+                      source_db_path=None, db_path=None):
     """Insert or update the automation for an account."""
     with get_db(db_path) as conn:
         conn.execute(
-            "INSERT INTO automations (account_id, name, script_command, working_directory) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(account_id) DO UPDATE SET name=?, script_command=?, working_directory=?",
-            (account_id, name, script_command, working_directory,
-             name, script_command, working_directory)
+            "INSERT INTO automations (account_id, name, script_command, working_directory, source_db_path) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(account_id) DO UPDATE SET name=?, script_command=?, working_directory=?, source_db_path=?",
+            (account_id, name, script_command, working_directory, source_db_path,
+             name, script_command, working_directory, source_db_path)
         )
     print(f"  Automation saved: {name}", flush=True)
+
+
+# --- Source queue passthrough (generic sqlite queue table at an arbitrary path) ---
+
+def _source_conn(source_db_path):
+    """Open a connection to an external sqlite file that has a `queue` table."""
+    if not source_db_path or not os.path.exists(source_db_path):
+        return None
+    conn = sqlite3.connect(source_db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def list_source_queue(source_db_path):
+    """Return all rows from the `queue` table of an external db. Empty list if unavailable."""
+    conn = _source_conn(source_db_path)
+    if conn is None:
+        return []
+    try:
+        # Detect which table/columns exist so the UI is project-agnostic
+        tables = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "queue" not in tables:
+            return []
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(queue)").fetchall()]
+        rows = conn.execute("SELECT * FROM queue").fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Provide convenience fields the template uses
+            d["_title"] = d.get("album_name") or d.get("title") or d.get("name") or f"entry #{d.get('id')}"
+            d["_subtitle"] = d.get("artist") or d.get("album_slug") or ""
+            d["_scheduled"] = d.get("scheduled_date") or d.get("scheduled_datetime") or ""
+            d["_status"] = d.get("status", "")
+            result.append(d)
+        # Sort by scheduled if present, else by id
+        result.sort(key=lambda x: (x.get("_scheduled") or "", x.get("id") or 0))
+        return result
+    finally:
+        conn.close()
+
+
+def delete_source_queue_entry(source_db_path, entry_id):
+    """Delete one row from an external `queue` table. Returns True on success."""
+    conn = _source_conn(source_db_path)
+    if conn is None:
+        return False
+    try:
+        cur = conn.execute("DELETE FROM queue WHERE id = ?", (entry_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_source_queue_entry(source_db_path, entry_id):
+    """Fetch a single row (as dict) from an external `queue` table, or None."""
+    conn = _source_conn(source_db_path)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute("SELECT * FROM queue WHERE id = ?", (entry_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def delete_automation(account_id, db_path=None):
